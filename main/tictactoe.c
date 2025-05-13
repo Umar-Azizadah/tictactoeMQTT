@@ -24,7 +24,7 @@ void app_main() {
             getPlayerMove();
         } else {
             printf("Waiting for Player O's move via MQTT..\n");
-            // mqtt (to be added in Part 2)
+            //mqtt (to be added)
         }
 
         winner = checkWinner();
