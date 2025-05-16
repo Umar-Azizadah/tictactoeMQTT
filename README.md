@@ -1,10 +1,5 @@
 # ESP32 IoT Tic-Tac-Toe System
-<<<<<<< HEAD
-An embedded + IoT system that implements a real-time multiplayer Tic-Tac-Toe game.  
-=======
-
 An advanced embedded + IoT system that implements a real-time multiplayer Tic-Tac-Toe game.  
->>>>>>> b183f8a9fc9e7696d4a4e07d91e2ba685084623c
 This project integrates local game logic on an ESP32 microcontroller with cloud-based player communication via MQTT using a Google Cloud-hosted broker.  
 The system allows for human vs. cloud-scripted player modes, demonstrating secure device-to-cloud communication and interactive embedded systems design.
 
@@ -22,7 +17,4 @@ The system allows for human vs. cloud-scripted player modes, demonstrating secur
 - MQTT Protocol
 - Google Cloud Compute Engine (GCP)
 - C Programming
-<<<<<<< HEAD
 
-=======
->>>>>>> b183f8a9fc9e7696d4a4e07d91e2ba685084623c
