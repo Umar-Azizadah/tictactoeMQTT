@@ -1,5 +1,8 @@
+//libraries
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include "mqtt_client.h"
 #include "esp_log.h"
 #include "esp_event.h"
@@ -9,7 +12,7 @@
 #include "esp_task_wdt.h"
 #include "driver/uart.h"
 
-// Game modes
+//game modes
 typedef enum {
     MODE_MENU,
     MODE_ONE_PLAYER,
@@ -17,6 +20,7 @@ typedef enum {
     MODE_AI_PLAYERS
 } game_mode_t;
 
+//game variables
 char board[3][3];
 char currentPlayer = 'X';
 bool wifi_connected = false;
@@ -27,11 +31,11 @@ game_mode_t current_mode = MODE_MENU;
 static esp_mqtt_client_handle_t client = NULL;
 static const char *TAG = "TicTacToe";
 
-// WiFi config
+//wifi config
 #define WIFI_SSID "Linksys03130"
 #define WIFI_PASS "0c2fzyk6dv"
 
-// UART config for console input
+//UART config for console input
 #define UART_NUM UART_NUM_0
 #define BUF_SIZE (1024)
 
@@ -48,8 +52,10 @@ void start_one_player_mode();
 void start_two_player_mode();
 void start_automate_play_mode();
 void process_player_move(int row, int col);
+void make_ai_move();
+void automated_game_task(void *pvParameters);
 
-// publish ready status
+//publish ready status
 void send_ready(const char* msg) {
     if (mqtt_connected) {
         esp_mqtt_client_publish(client, "tictactoe/ready", msg, 0, 1, 0);
@@ -57,7 +63,7 @@ void send_ready(const char* msg) {
     }
 }
 
-// mqtt event callback
+//mqtt event callback
 static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event) {
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
@@ -65,11 +71,11 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event) {
             mqtt_connected = true;
             esp_mqtt_client_subscribe(client, "tictactoe/control", 0);
             
-            // If we're in the menu mode, display the menu
+            // if in the menu mode, display the menu
             if (current_mode == MODE_MENU) {
                 display_menu();
             }
-            // If we're in one-player mode and game not started, start it
+            //if in one-player mode and game not started, start it
             else if (current_mode == MODE_ONE_PLAYER && !game_started) {
                 start_one_player_mode();
             }
@@ -86,8 +92,10 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event) {
         case MQTT_EVENT_DATA:
             ESP_LOGI(TAG, "MQTT Data Received");
 
-            // Only process MQTT data in one-player mode and when it's Player O's turn
-            if (current_mode == MODE_ONE_PLAYER && currentPlayer == 'O') {
+            //gandle MQTT data in both one-player and AI_PLAYERS modes
+            if ((current_mode == MODE_ONE_PLAYER && currentPlayer == 'O') || 
+                (current_mode == MODE_AI_PLAYERS && currentPlayer == 'O')) {
+                
                 char data[32] = {0};
                 snprintf(data, sizeof(data), "%.*s", event->data_len, event->data);
                 char player;
@@ -98,7 +106,7 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event) {
 
                     if (row >= 0 && row < 3 && col >= 0 && col < 3 && board[row][col] == ' ') {
                         board[row][col] = currentPlayer;
-                        printBoard();  // Print board after MQTT player's move
+                        printBoard();  //print board after MQTT player's move
                         
                         int winner = checkWinner();
                         if (winner) {
@@ -108,17 +116,24 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event) {
                                 printf("Player %c wins!\n", winner == 1 ? 'X' : 'O');
                             }
                             send_ready("done");
-                            // Game is over, but keep the program running
-                            // Return to menu after a brief delay
+                            //game is over, but keep the program running
+                            //return to menu after a brief delay
                             vTaskDelay(3000 / portTICK_PERIOD_MS);
                             game_started = false;
                             current_mode = MODE_MENU;
                             display_menu();
                         } else {
                             currentPlayer = 'X';
-                            printf("Human Player's turn (X)\n");
-                            printf("Enter row and column (0-2): ");
-                            fflush(stdout);
+                            
+                            if (current_mode == MODE_ONE_PLAYER) {
+                                printf("Human Player's turn (X)\n");
+                                printf("Enter row and column (0-2): ");
+                                fflush(stdout);
+                            } else if (current_mode == MODE_AI_PLAYERS) {
+                                printf("AI Player X's turn\n");
+                                //for AI mode, trigger the C program to make its move
+                                make_ai_move();
+                            }
                             send_ready("next");
                         }
                     } else {
@@ -134,12 +149,12 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event) {
     return ESP_OK;
 }
 
-// mqtt wrapper
+//mqtt wrapper
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     mqtt_event_handler_cb(event_data);
 }
 
-// WiFi event handler
+//wifi event handler
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT) {
@@ -156,12 +171,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "WiFi connected! IP:" IPSTR, IP2STR(&event->ip_info.ip));
         wifi_connected = true;
         
-        // Start MQTT after WiFi is connected
+        //start MQTT after WiFi is connected
         mqtt_app_start();
     }
 }
 
-// Display the main menu
+//display the main menu
 void display_menu() {
     printf("\n\n=== ESP32 Tic-Tac-Toe ===\n");
     printf("Select game mode:\n");
@@ -172,7 +187,7 @@ void display_menu() {
     fflush(stdout);
 }
 
-// Handle menu selection
+//handle menu selection
 void handle_menu_selection(int selection) {
     switch (selection) {
         case 1:
@@ -189,7 +204,11 @@ void handle_menu_selection(int selection) {
             break;
         case 3:
             current_mode = MODE_AI_PLAYERS;
-            start_automate_play_mode();
+            if (mqtt_connected) {
+                start_automate_play_mode();
+            } else {
+                printf("Waiting for MQTT connection to start automated game...\n");
+            }
             break;
         default:
             printf("Invalid selection. Please try again.\n");
@@ -198,23 +217,23 @@ void handle_menu_selection(int selection) {
     }
 }
 
-// Start one-player mode (vs. MQTT)
+//start one-player mode (vs. MQTT)
 void start_one_player_mode() {
     game_started = true;
     currentPlayer = 'X';
     initializeBoard();
-    send_ready("new");  // Signal that a new game is starting
+    send_ready("new"); //signal that a new game is starting
     
     printf("\n=== One Player Mode ===\n");
     printf("Player X = Human (Serial input)\n");
     printf("Player O = Bash Script (MQTT input)\n\n");
-    printBoard();  // Print initial empty board
+    printBoard();  //print initial empty board
     printf("Human Player's turn (X)\n");
     printf("Enter row and column (0-2): ");
     fflush(stdout);
 }
 
-// Start two-player mode (human vs. human)
+//start two-player mode (human vs. human)
 void start_two_player_mode() {
     game_started = true;
     currentPlayer = 'X';
@@ -222,26 +241,152 @@ void start_two_player_mode() {
     
     printf("\n=== Two Player Mode ===\n");
     printf("Player X and Player O both use serial input\n\n");
-    printBoard();  // Print initial empty board
+    printBoard();  //print initial empty board
     printf("Player %c's turn\n", currentPlayer);
     printf("Enter row and column (0-2): ");
     fflush(stdout);
 }
 
+//make an AI move for Player X (C program)
+void make_ai_move() {
+    //simple strategy - try random positions
+    int row, col;
+    bool valid_move = false;
+    
+    //seed the random number generator if this is the first AI move
+    static bool seeded = false;
+    if (!seeded) {
+        srand(time(NULL));
+        seeded = true;
+    }
+    
+    printf("AI Player X is thinking...\n");
+    vTaskDelay(1000 / portTICK_PERIOD_MS); //add a small delay to simulate "thinking"
+    
+    //look for a winning move
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            if (board[r][c] == ' ') {
+                //try this position
+                board[r][c] = 'X';
+                if (checkWinner() == 1) { //if X would win
+                    row = r;
+                    col = c;
+                    valid_move = true;
+                    board[r][c] = ' '; //undo the test move
+                    goto make_move; //found a winning move, break out
+                }
+                board[r][c] = ' '; //undo the test move
+            }
+        }
+    }
+    
+    //look for a blocking move (if O would win next)
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            if (board[r][c] == ' ') {
+                //try this position for O
+                board[r][c] = 'O';
+                if (checkWinner() == 2) { //if O would win
+                    row = r;
+                    col = c;
+                    valid_move = true;
+                    board[r][c] = ' '; //undo the test move
+                    goto make_move; //found a blocking move, break out
+                }
+                board[r][c] = ' '; //undo the test move
+            }
+        }
+    }
+    
+    //try center first if available (strategic)
+    if (board[1][1] == ' ') {
+        row = 1;
+        col = 1;
+        valid_move = true;
+        goto make_move;
+    }
+    
+    //try corners next
+    int corners[4][2] = {{0,0}, {0,2}, {2,0}, {2,2}};
+    for (int i = 0; i < 4; i++) {
+        int r = corners[i][0];
+        int c = corners[i][1];
+        if (board[r][c] == ' ') {
+            row = r;
+            col = c;
+            valid_move = true;
+            goto make_move;
+        }
+    }
+    
+    //otherwise try random positions until find a valid move
+    int attempts = 0;
+    while (!valid_move && attempts < 20) {
+        row = rand() % 3;
+        col = rand() % 3;
+        if (board[row][col] == ' ') {
+            valid_move = true;
+        }
+        attempts++;
+    }
+    
+    //if still no valid move found after random attempts, find any empty cell
+    if (!valid_move) {
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                if (board[r][c] == ' ') {
+                    row = r;
+                    col = c;
+                    valid_move = true;
+                    goto make_move;
+                }
+            }
+        }
+    }
+
+//whenever the best move is found, jumps to here and processes the move
+make_move:
+    if (valid_move) {
+        printf("AI Player X chooses position: %d %d\n", row, col);
+        process_player_move(row, col);
+    } else {
+        printf("AI Player X couldn't find a valid move!\n");
+    }
+}
+
+//function to handle the automated game task
+void automated_game_task(void *pvParameters) {
+    while (1) {
+        //only make moves if in AI_PLAYERS mode, game has started, and it's X's turn
+        if (current_mode == MODE_AI_PLAYERS && game_started && currentPlayer == 'X') {
+            make_ai_move();
+        }
+        
+        //sleep before checking again
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+}
+
+//start automate play
 void start_automate_play_mode() {
     game_started = true;
     currentPlayer = 'X';
     initializeBoard();
+    send_ready("new");  //signal that a new game is starting
 
     printf("\n=== AI vs AI Mode ===\n");
-    printf("Player X (C program) Player O (bash script)\n\n");
+    printf("Player X (C program) vs Player O (bash script)\n\n");
     printBoard();
-    printf("Player %c's turn\n", currentPlayer);
+    printf("AI Player X's turn\n");
+    
+    //trigger the C program AI to make its move
+    make_ai_move();
 }
 
-// Process a player's move
+//process a player's move
 void process_player_move(int row, int col) {
-    // Check if the move is valid
+    //check if the move is valid
     if (row >= 0 && row < 3 && col >= 0 && col < 3 && board[row][col] == ' ') {
         board[row][col] = currentPlayer;
         printBoard();
@@ -254,29 +399,32 @@ void process_player_move(int row, int col) {
                 printf("Player %c wins!\n", winner == 1 ? 'X' : 'O');
             }
             
-            // If in one-player mode, notify via MQTT
-            if (current_mode == MODE_ONE_PLAYER && mqtt_connected) {
+            //notify via MQTT in either one-player or AI_PLAYERS mode
+            if ((current_mode == MODE_ONE_PLAYER || current_mode == MODE_AI_PLAYERS) && mqtt_connected) {
                 send_ready("done");
             }
             
-            // Return to menu after a delay
+            //return to menu after a delay
             vTaskDelay(3000 / portTICK_PERIOD_MS);
             game_started = false;
             current_mode = MODE_MENU;
             display_menu();
         } else {
-            // Switch players
+            //switch players
             currentPlayer = (currentPlayer == 'X') ? 'O' : 'X';
             
-            // In one-player mode, notify MQTT if it's player O's turn
-            if (current_mode == MODE_ONE_PLAYER) {
+            //in one-player or AI_PLAYERS mode, notify MQTT if it's player O's turn
+            if (current_mode == MODE_ONE_PLAYER || current_mode == MODE_AI_PLAYERS) {
                 if (currentPlayer == 'O') {
                     printf("Waiting for Player O's move via MQTT...\n");
                     send_ready("next");
-                } else {
+                } else if (current_mode == MODE_ONE_PLAYER) {
                     printf("Human Player's turn (X)\n");
                     printf("Enter row and column (0-2): ");
                     fflush(stdout);
+                } else {
+                    printf("AI Player X's turn\n");
+                    //in AI_PLAYERS mode, the automated_game_task will handle making the move
                 }
             } 
             //in two-player mode, prompt the next player
@@ -288,12 +436,20 @@ void process_player_move(int row, int col) {
         }
     } else {
         printf("Invalid move. Spot taken or out of range.\n");
-        printf("Enter row and column (0-2): ");
-        fflush(stdout);
+        
+        //if in AI mode and invalid move attempted by AI player X, try again
+        if (current_mode == MODE_AI_PLAYERS && currentPlayer == 'X') {
+            printf("AI Player X is trying again...\n");
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+            make_ai_move();
+        } else if (current_mode != MODE_AI_PLAYERS) {
+            printf("Enter row and column (0-2): ");
+            fflush(stdout);
+        }
     }
 }
 
-//uART task to handle player input
+//UART task to handle player input
 void uart_task(void *pvParameters) {
     char input[16];
     int idx = 0;
@@ -361,6 +517,9 @@ void uart_task(void *pvParameters) {
 void app_main() {
     ESP_LOGI(TAG, "Initializing...");
     
+    //initialize random number generator for AI moves
+    srand(time(NULL));
+    
     //initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -390,6 +549,9 @@ void app_main() {
     
     //create a task to handle UART input
     xTaskCreate(uart_task, "uart_task", 4096, NULL, 10, NULL);
+    
+    //create a task to handle automated play
+    xTaskCreate(automated_game_task, "automated_game_task", 4096, NULL, 5, NULL);
     
     //connect to WiFi (MQTT will start once WiFi connects)
     printf("Connecting to WiFi...\n");
